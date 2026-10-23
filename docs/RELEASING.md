@@ -8,7 +8,7 @@ neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 develop
 
 | Type                  | Format                          | Example                    |
 | --------------------- | ------------------------------- | -------------------------- |
-| **Nightly**           | `0.x.y-nightly.g<engine-sha>`   | `0.2.0-nightly.gc3652dc0`  |
+| **Nightly**           | `v0.x.y-nightly.g<engine-sha>`  | `v0.2.0-nightly.gc3652dc0` |
 | **Release Candidate** | `v0.x.y-rc.<n>`                 | `v0.2.0-rc.1`              |
 | **Stable**            | `v0.x.y`                        | `v0.2.0`                   |
 | **Patch**             | `v0.x.y+1`                      | `v0.2.1`                   |
@@ -57,7 +57,7 @@ main branch (trunk)
 
 Automated CI builds run nightly at 03:37 in `Europe/Berlin` (and on manual workflow dispatch) for Windows, macOS, and Linux. Nightlies provide immediate visibility into recent changes but carry no guarantee against regressions.
 
-The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
+The public Nightly version uses the source commit (`v0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
 
 ### 2. Preparing a Stable release
 
@@ -79,6 +79,7 @@ Once an RC exhibits no known release blockers:
 
 - Tag the **exact commit** of the final accepted RC as the Stable release (e.g. `v0.4.0`).
 - Avoid pushing last-minute, unvalidated changes between the final RC and the release tag.
+- **Pruning older nightlies:** Once a stable release is published, all preceding development nightlies for that release line (e.g. `v0.x.y-nightly.*`) are pruned from GitHub Releases. This keeps the public releases page focused on vetted stable builds and avoids user confusion with obsolete snapshot binaries.
 
 ### 5. Patch releases
 
