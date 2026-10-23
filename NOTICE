@@ -26,7 +26,7 @@ Optional Realistic Passengers (tools/realistic-pax):
 
 The scripts in tools/realistic-pax build a passenger pack from third-party
 assets. The pack is not part of the neoOMSI repository or the program's release
-files: the launcher downloads it on request from a release of its own.
+files: neoOMSI downloads it on request from a release of its own.
 
 - Microsoft Rocketbox avatars, Copyright (c) Microsoft Corporation, MIT License
   (https://github.com/microsoft/Microsoft-Rocketbox). The built pack carries

@@ -23,7 +23,7 @@ python tools/realistic-pax/build.py --omsi "C:/Steam/steamapps/common/OMSI 2"
 `build/RealisticPax` or the directory passed to `--out`. After changing weights or voices,
 `build.py --hums-only` updates the `.hum` files without Blender.
 
-Players do not run any of this: the launcher downloads the pack (**Settings → Gameplay →
+Players do not run any of this: neoOMSI downloads the pack (**Settings → Gameplay →
 Download the realistic passengers**) from the release tagged `realistic-pax-v2`, checks it
 against the SHA-256 GitHub lists and installs it into `<content folder>/Packs/RealisticPax`.
 To publish a new pack:
@@ -33,13 +33,13 @@ To publish a new pack:
 2. Upload that file to a GitHub release tagged `realistic-pax-v<N>`, as a pre-release (not
    marked latest).
 3. For a new version, raise `PACK_VERSION` in `build.py` and `TAG`, `FILE` and `VERSION` in
-   `crates/omsi-app/src/pax_pack.rs`; the launcher then offers installed older packs an
+   `crates/omsi-app/src/pax_pack.rs`; the game then offers installed older packs an
    update. A pack copied in by hand has no `pack.json` and is left alone.
 
 ## Licences
 
 Nothing of the avatars is in the neoOMSI repository or the program's releases: the pack is a
-release file of its own that the launcher downloads on request.
+release file of its own that neoOMSI downloads on request.
 
 | Source | Licence | In the pack |
 | --- | --- | --- |

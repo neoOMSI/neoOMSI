@@ -39,7 +39,7 @@ Detailed documentation and policies live in dedicated guides:
 
 | Guide                                       | Description                                           |
 | ------------------------------------------- | ----------------------------------------------------- |
-| [User guide](docs/USER_GUIDE.md)            | How to run neoOMSI, launcher options, and keybindings |
+| [User guide](docs/USER_GUIDE.md)            | How to run neoOMSI, start menu options, and keybindings |
 | [Building](docs/BUILDING.md)                | Platform prerequisites and build instructions         |
 | [Contributing](CONTRIBUTING.md)             | Guidelines for contributors and PR expectations       |
 | [Development workflow](docs/DEVELOPMENT.md) | Branching model, review standards, and dev scripts    |
