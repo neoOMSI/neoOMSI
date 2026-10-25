@@ -6,6 +6,20 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
+## 0.2.2 - 2026-10-25
+
+### Fixes
+
+- `GetHeightAbovePoint` detects overhead wires on coupled vehicle parts and AI vehicles. (!625)
+- Timetable buses keep their vehicle for the next scheduled trip, even after a very short trip. (!631)
+- AI vehicles no longer stop permanently when their route crosses buried ground surfaces, as at Sprackel on Städtedreieck. (!632)
+- AI trams and trains no longer stop in bends because another rail vehicle is on the adjacent track. (!633)
+- Spline-attached objects, such as bus shelters, now match OMSI placement on joined and older maps. (!634)
+- Vehicles with `[registration_list]` followed by `[registration_automatic]` now use the listed plates, as in OMSI 2. (!635)
+- The pause menu keeps regular weather choices available when METAR sync is off. (!637)
+- Fullscreen recovers when the swapchain stops presenting: failed resizes are retried, with a borderless fullscreen fallback. (!642)
+- Trams backing over two-way stubs and switches stay on the rails instead of stopping or breaking apart. (!644)
+
 ## 0.2.1 - 2026-10-25
 
 ### Fixes
