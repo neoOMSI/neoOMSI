@@ -47,8 +47,8 @@ Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<engine>`)
 
 ```text
 main (nightlies)
-  └── release/x.y → prepare → RC(s) → stable → sync to main
-                       └── patch fixes → prepare → patch tag → sync to main
+  └── release/x.y.x → prepare → RC(s) → stable → sync to main
+                         └── patch fixes → prepare → patch tag → sync to main
                             (repeat as needed; no RCs for patches)
 ```
 
@@ -64,7 +64,7 @@ For every release, a failed, skipped, or incomplete required GitHub Actions job 
 
 ### 2. Minor release: freeze → prepare → RC → stable → sync
 
-1. **Freeze:** Branch `release/x.y` from a tested `main` commit (e.g. `release/0.2`). Allow only release blockers, documentation corrections, and packaging fixes on the release branch; development continues on `main`.
+1. **Freeze:** Branch `release/x.y.x` from a tested `main` commit (e.g. `release/0.2.x`). Allow only release blockers, documentation corrections, and packaging fixes on the release branch; development continues on `main`.
 2. **Prepare:** Update `VERSION`, run `bash scripts/compile-changelog.sh <version> <YYYY-MM-DD>`, review the resulting changelog and fragment removals, then commit as `chore(release): prepare <version>`.
 3. **RC:** Check GitHub Actions capacity, tag `v<version>-rc.1` on the prepared source commit in GitLab, then sync the changelog and push the matching public RC tag. Verify the GitHub Actions release workflow, required platform artifacts, build manifest, and behavior across supported systems and representative content. Fix blockers on the release branch and issue `-rc.2`, `-rc.3`, etc. as needed.
 4. **Stable:** When an RC has no known release blockers, tag **the exact accepted source commit** as `v<version>` in GitLab. Do not add an untested finalization commit.
@@ -73,7 +73,7 @@ For every release, a failed, skipped, or incomplete required GitHub Actions job 
 
 ### 3. Patch release: fix → prepare → patch → sync
 
-Patch releases **do not use Release Candidates**. On the current supported `release/x.y` branch:
+Patch releases **do not use Release Candidates**. On the current supported `release/x.y.x` branch:
 
 1. Apply and review the necessary fixes; retain the release branch's feature freeze.
 2. Update `VERSION`, compile and review the patch changelog with the same script, and commit as `chore(release): prepare <version>`.
@@ -90,7 +90,7 @@ After that final cycle, only an exceptional **release blocker** may be backporte
 
 For every release, never move or reuse a published tag. Use ordinary Conventional Commits for fixes (e.g. `fix(graphics): recover from swapchain failure`); the sole standardized release-preparation message is `chore(release): prepare <version>`.
 
-Only the latest stable minor line is normally maintained. Its `release/x.y` branch remains available for patches until the next stable minor release is published; 0.2 follows the early-live-support cutoff above. Older release branches may then be deleted; tags and published releases remain permanent, and a maintenance branch can be recreated from a tag for an exceptional backport.
+Only the latest stable minor line is normally maintained. Its `release/x.y.x` branch remains available for patches until the next stable minor release is published; 0.2 follows the early-live-support cutoff above. Older release branches may then be deleted; tags and published releases remain permanent, and a maintenance branch can be recreated from a tag for an exceptional backport.
 
 ## Changelog management
 

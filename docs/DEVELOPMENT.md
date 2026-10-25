@@ -33,7 +33,7 @@ main
 ├── perf/...         (performance optimizations)
 ├── docs/...         (documentation updates)
 ├── chore/...        (tooling and build infrastructure)
-└── release/x.y      (release stabilization and current stable line)
+└── release/x.y.x    (release stabilization and current stable line)
 ```
 
 ### Working with branches
@@ -44,7 +44,7 @@ main
 
 ### Release branches
 
-`release/x.y` branches are created to stabilize releases and allow supported patches without disturbing `main`. The 0.2 line is in early live support: it gets one final planned patch cycle, 0.2.3, after which only exceptional release blockers may be backported. New routine fixes, parity work, and features go to `main` for 0.3. See [Releasing & versioning](RELEASING.md).
+`release/x.y.x` branches are created to stabilize a minor release line and allow its patch releases without disturbing `main`. The 0.2 line is in early live support: it gets one final planned patch cycle, 0.2.3, after which only exceptional release blockers may be backported. New routine fixes, parity work, and features go to `main` for 0.3. See [Releasing & versioning](RELEASING.md).
 
 ## Local development and testing
 
