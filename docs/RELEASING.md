@@ -8,12 +8,16 @@ neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 develop
 
 | Type                  | Format                          | Example                    |
 | --------------------- | ------------------------------- | -------------------------- |
-| **Nightly**           | `v0.x.y-nightly.g<engine-sha>`  | `v0.2.0-nightly.gc3652dc0` |
+| **Nightly**           | `0.x.y-nightly.g<engine-sha>`   | `0.2.0-nightly.gc3652dc0`  |
 | **Release Candidate** | `v0.x.y-rc.<n>`                 | `v0.2.0-rc.1`              |
 | **Stable**            | `v0.x.y`                        | `v0.2.0`                   |
 | **Patch**             | `v0.x.y+1`                      | `v0.2.1`                   |
 
 `1.0.0` is reserved for achieving comprehensive behavioral parity across the OMSI 2.2.032 baseline, not simply for elapsed development time.
+
+In **Game & Updates**, players can select Stable, RC, or EA (Nightly). Each channel checks
+its own GitHub releases; Stable is the default. EA and RC selections show a warning, and
+installing an older release requires confirmation. **Check now** checks the selected channel.
 
 ## Build identity
 
@@ -57,7 +61,7 @@ main branch (trunk)
 
 Automated CI builds run nightly at 03:37 in `Europe/Berlin` (and on manual workflow dispatch) for Windows, macOS, and Linux. Nightlies provide immediate visibility into recent changes but carry no guarantee against regressions.
 
-The public Nightly version uses the source commit (`v0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
+The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
 
 ### 2. Preparing a Stable release
 
@@ -79,7 +83,6 @@ Once an RC exhibits no known release blockers:
 
 - Tag the **exact commit** of the final accepted RC as the Stable release (e.g. `v0.4.0`).
 - Avoid pushing last-minute, unvalidated changes between the final RC and the release tag.
-- **Pruning older nightlies:** Once a stable release is published, all preceding development nightlies for that release line (e.g. `v0.x.y-nightly.*`) are pruned from GitHub Releases. This keeps the public releases page focused on vetted stable builds and avoids user confusion with obsolete snapshot binaries.
 
 ### 5. Patch releases
 
@@ -96,9 +99,10 @@ Only the latest stable minor line is actively maintained. Its `release/x.y` bran
 To prevent merge conflicts across concurrent pull requests, contributors add small fragment files under `.changes/` instead of editing `CHANGELOG.md` directly:
 
 ```text
-.changes/<pr-number>.<category>.md
+.changes/new.<category>.md
 ```
 
-- **Nightly CI:** Groups fragments changed since the previous rolling nightly by category, links each entry to its PR, and links packaged downloads directly.
+- **Merge Requests:** Fragments created as `new.<category>.md` are automatically renamed to `<mr-number>.<category>.md` by the CI pipeline upon opening.
+- **Nightly CI:** Groups fragments changed since the previous rolling nightly by category and references each MR.
 - **Stable Releases:** `scripts/compile-changelog.sh` uses the same renderer to compile all accumulated fragments into a new section in `CHANGELOG.md` and deletes the processed fragment files.
 - **Fragment Guide:** See [.changes/README.md](../.changes/README.md) for naming rules, categories, and fragment formatting.

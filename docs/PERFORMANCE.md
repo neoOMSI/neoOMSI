@@ -1,0 +1,136 @@
+# Renderer performance checks
+
+`cargo run --profile dev-release -p render --example frame_cost` runs a synthetic CPU
+benchmark through wgpu's noop backend. It needs no game content or graphics adapter.
+It measures mesh upload preparation, rendering a large scene with a mirror across a
+floating-origin cell boundary, preparing distant shadow casters, and scattered transform
+and material updates. These are CPU measurements, not game FPS or GPU timings; compare
+the same build profile on the same
+machine with other workloads stopped
+
+The renderer keeps these costs bounded without changing graphics settings:
+
+- Nearby mirrors, the second stereo eye and side panels reuse the primary view's
+  floating origin. Previously each view snapped its own camera to a 100 m cell. A
+  mirror across the cell boundary invalidated and rebuilt every instance's model and
+  material parameters, even for static objects outside the picture. Distant secondary
+  cameras still rebase to preserve precision.
+- A texture's `.cfg` sidecar is looked for in the folder's cached listing and read once
+  per texture (until the content changes), not probed and read again for every material
+  slot. Placing an object type on the main thread while a map streams in looked up the
+  sidecar of each of its slots: a building with 945 slots took 180 ms of a frame on
+  Grande Porto, now about 10 ms. `OMSI_DEBUG_UPLOAD=1` logs every texture and object type
+  whose upload takes more than 8 ms.
+- Textures compressed to BC1/BC3 on the CPU are cached: 256 MB in memory, up to 4 GB on
+  disk in `~/.neoomsi/cache/textures`. Reloading a tile or restarting skips the encode;
+  pictures that failed the quality check are not tried again. `OMSI_TEXTURE_CACHE=<folder>`
+  moves the cache, `OMSI_NO_TEXTURE_CACHE=1` keeps it in memory only. `OMSI_DEBUG_TEXTURES=1`
+  logs encodes and hits; `OMSI_CHURN=x,y` logs the encodes of a reloaded start area.
+- Texture folders are worked out once per content change, and paths resolve through the
+  cached folder listings before the file system is asked.
+- The window's view keeps its render origin until the camera is 400 m from it (a 0.03 mm
+  step in 32 bits), not only within its 100 m cell. When the origin moves sideways, only
+  the uploaded model matrices are written again; parameters, bounds and culling blocks do
+  not depend on it. A move in height still makes every entry anew (roof heights). Before,
+  every 100 m the bus drove made all entries of the scene anew, a stutter of tens of
+  milliseconds on a large map and a slower CPU.
+- An instance given another mesh (a person or a bus part taking its skinned copy) is
+  updated alone instead of the whole scene. A pose measures again the instances drawing
+  a reshaped mesh, kept in a list, instead of walking every instance of the map each frame.
+- Small meshes (splines, terrain, objects) share 16 MB vertex and 8 MB index pages and are
+  drawn with a base vertex and first index; a draw binds buffers, and a material group,
+  only when they differ from the previous draw's. Before, almost every draw bound two
+  buffers of its own. Meshes larger than a quarter of a page, meshes made on other threads
+  and adapters without base-vertex draws keep buffers of their own
+  (`OMSI_NO_MESH_PAGES=1` forces that).
+- A spline's mesh draws one range per texture, not one per `[profile]`: a road of ten
+  profiles over three textures took ten draws. A profile keeps its place when it would
+  otherwise be drawn before a profile whose face it shares (at one depth the face drawn
+  last shows); blended textures keep their order. Static spline segments share a mesh
+  within 150 m cells (48 m before). At a crossing built of hundreds of short splines
+  (Städtedreieck, Kreuzung Sprackel) the main pass went from 5,900 batches to 3,500 by
+  day and from 6,800 to 3,500 at night, and the depth prepass from 5,800 to 3,000; the
+  picture is unchanged. Their graphics card was idle while slower computers lost frames
+  there: the cost was the draws, not the triangles (2 % more drawn).
+- Pending animated meshes are indexed by mesh ID. Updating all `N` meshes previously
+  performed roughly `N * (N - 1) / 2` ID comparisons. The indexed queue replaces the
+  last pending pose and retains its table capacity after submission.
+- Shadow preparation applies the existing geometric rejection tests before examining
+  material slots. Objects outside all active sun and spotlight views need no material
+  classification. The geometric thresholds, alpha rules and submitted draws are unchanged.
+- Incremental instance uploads compare model matrices and material parameters separately.
+  Lighting changes upload parameters; motion uploads matrices, plus parameters if needed
+  (for example, moving a roof height used for lighting). Merged writes copy at most as much
+  unchanged padding as changed data, instead of bridging a chain of 4,096-slot gaps.
+- Tile workers resolve texture paths before decoding and compressing them. Different
+  search-folder lists that resolve to one file share one decode within the batch, reducing
+  CPU work and temporary image memory. Different pack files retain their own identities.
+- The 1 MB light grid is kept between frames. Only cells that hold a light now, or held
+  one before, are rewritten, and only the changed span is uploaded. Previously the grid
+  was rebuilt, compared and, once a headlight moved, uploaded in full for the picture and
+  for each mirror.
+- Animated meshes (cars, people, the driver) are uploaded through one staging buffer per
+  frame and copied before the first pass. wgpu's `write_buffer` creates a staging buffer
+  per call, so one call per mesh meant one driver allocation per mesh per frame.
+- The main pass is recorded in up to four parts, each finished on an encoding thread;
+  culling and shadow-caster collection split the scene into parts of 4,096 objects.
+  Parts keep the draw order, so the picture is unchanged.
+- Script programs answer `stores(var)` from a set built once, and name lookups no longer
+  allocate a lower-case copy. Passengers and the driver figure query a bus's door
+  variables several times a frame; each query used to scan every op of every block.
+- The window picture's command buffers are finished, submitted and presented on a thread of
+  their own (`render-submit`), while the main thread goes on with the next frame's traffic,
+  vehicle and people. `finish`, `submit` and `present` took about a quarter of the main
+  thread's frame. Every write to a buffer a picture reads happens in `render_inner`, which
+  waits for the thread first. `OMSI_NO_SUBMIT_THREAD=1` submits on the main thread again.
+- The mirrors and the navigator panel leave their commands for the same submission, ahead of
+  the picture's own. The navigator used a submission of its own for each pass, about 1 ms
+  each time the panel was redrawn; the interface's layer uniforms now take slots of their own
+  per draw, so its passes share one encoder.
+- A picture's buffer writes (camera, lights, light grid, instance ranges, post uniforms) are
+  gathered into one staging buffer and copied by a command buffer submitted just before the
+  picture's. `write_buffer` made a staging buffer per call, some 25 a picture.
+- The culling, the shadow casters' search and the search for screen lights pass by whole
+  blocks of 128 instances whose bounding box is out of the view, the light boxes or reach.
+  A moved instance grows its block's box at once; a few grown boxes are measured again each
+  frame. The instances' fields read by these passes lie together at the start of `Instance`.
+- The window's main-pass bundles are kept part by part: a part whose batches bind the same
+  pipelines, buffers and groups as last frame's is replayed instead of recorded again. The
+  shadow casters' entries go after the passes' own in the draw list, so that changing
+  shadows do not move the main pass's batches.
+- Passengers are skinned and uploaded only at the level of detail shown, and the vertex
+  lists of animated meshes are reused between frames. Their bones are made in parallel.
+- The game uses mimalloc on every system: with the render, tile and navigator threads
+  allocating at once, the Windows process heap's lock took a tenth of a busy frame.
+- The navigator's map is built at a lower priority, and the panel's ground on a thread of its
+  own; the old ground is drawn until the new one is ready.
+
+On Windows, DirectX 12 compiles shaders with DXC when `dxcompiler.dll` and `dxil.dll`
+sit next to `neoomsi.exe`, as release packages ship them. Without them wgpu falls back
+to FXC, and the first start takes about 55 s instead of about 16 s on a fast CPU.
+Local builds in `target/` have no DXC: copy the two DLLs there to start as fast as a release.
+Compiling the pipeline variants on several threads does not help. DXC and FXC serialize
+the compiles internally, and parallel cache misses compile shared stages several times.
+
+For report of very low FPS, run the game with `OMSI_PROFILE=1`, `RUST_LOG=info`, and
+`--exit-after 120` using the reported map, vehicle, view and traffic settings. The exit
+summary records CPU stage times, draw counts, tile streaming spikes, incremental instance
+upload bytes/write counts, and GPU pass times where the adapter supports them
+(`OMSI_GPU_TIMERS=1`). With `--exit-after`, stage averages cover only the second half of
+the run, after loading. Without it, the same summary is written when the game closes
+(Escape, the window or SIGTERM) or goes back to the main menu, averaged from 15 s after
+the player's bus appears; each session played from the menu gets its own summary.
+`frame.*` entries time every phase of the frame without gaps. `profile thread` lines list
+each thread's CPU time per frame.
+
+Dev builds (`dev-release` or `dev` with the default `devtools` feature) on Windows can
+sample the main thread to show which functions the stages spend their time in, without an
+elevated profiler: `OMSI_SAMPLE=<start s>,<length s>` (default `40,40`) stops the main
+thread every millisecond, reads its call stack and, after the length, writes
+`sample-report.txt` to the working folder: the functions by their own samples, with what
+they call, and caller → callee pairs, named from the PDB. Start sampling after loading,
+e.g. `OMSI_SAMPLE=40,40` with `--exit-after 90`.
+Include the map/vehicle, graphics mode, mirror/VR
+settings, adapter, and whether the problem occurs during steady driving or loading.
+Do not infer that one improved CPU benchmark explains every low-FPS report: streaming,
+scripts, GPU fill cost and memory pressure require their own reproduction and measurements.

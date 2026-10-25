@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>neoOMSI full vehicle dashboard (omsi.vehicle API v1)</title>
+    <style>
+        body { margin: 0px; width: 800px; height: 480px; background: #090e14; color: #e8f0f8; font-size: 14px; line-height: 20px; }
+
+        /* header */
+        #head { background: #111925; padding: 7px 14px 7px 14px; font-size: 18px; line-height: 24px; height: 24px; }
+        #accent { height: 3px; background: #ffb020; }
+        .amber { color: #ffb020; font-weight: bold; }
+        .dim { color: #6b829a; }
+        .cy { color: #38c8ff; }
+
+        .sec { padding: 0px 10px 0px 10px; }
+        .title { color: #4f9dc4; font-size: 11px; line-height: 14px; font-weight: bold; padding: 5px 0px 1px 2px; }
+
+        /* top tiles */
+        .tile { display: inline-block; width: 230px; height: 96px; margin: 4px 4px 4px 4px; padding: 8px 10px 8px 10px; background: #111925; border-radius: 10px; }
+        .big { font-size: 46px; line-height: 50px; font-weight: bold; color: #ffb020; }
+        .unit { font-size: 15px; color: #6b829a; font-weight: normal; }
+        .track { width: 230px; height: 8px; background: #1f2d3d; margin: 4px 0px 3px 0px; border-radius: 4px; }
+        .fill { width: 0%; height: 8px; background: #38c8ff; border-radius: 4px; }
+        .ptrack { width: 230px; height: 6px; background: #1f2d3d; margin: 1px 0px 3px 0px; border-radius: 3px; }
+        .pfill { width: 0%; height: 6px; border-radius: 3px; }
+        .plabel { font-size: 11px; line-height: 13px; color: #6b829a; }
+        .line { font-size: 15px; line-height: 20px; }
+        .small { font-size: 12px; line-height: 16px; color: #6b829a; }
+        .val { color: #e8f0f8; font-weight: bold; }
+
+        /* lamps and doors */
+        .lamp { display: inline-block; width: 82px; height: 22px; margin: 2px 2px 2px 2px; background: #141d29; color: #46596d; text-align: center; font-size: 12px; line-height: 22px; border-radius: 11px; }
+        .door { display: inline-block; width: 70px; height: 36px; margin: 2px 2px 2px 2px; background: #141d29; color: #6b829a; text-align: center; font-size: 12px; line-height: 14px; border-radius: 8px; }
+        .door .n { font-size: 15px; line-height: 20px; font-weight: bold; }
+
+        /* data cells */
+        .cell { display: inline-block; width: 120px; margin: 0px 6px 0px 0px; font-size: 12px; line-height: 17px; }
+
+        /* buttons */
+        .btn { display: inline-block; width: 170px; height: 28px; margin: 4px 6px 4px 0px; background: #1d3d5c; color: #ffffff; text-align: center; font-size: 13px; font-weight: bold; line-height: 28px; border-radius: 8px; }
+
+        /* states (after the base classes so they win) */
+        .on { background: #1fa64f; color: #ffffff; }
+        .warn { background: #e5383b; color: #ffffff; }
+        .hot { background: #f08c00; color: #ffffff; }
+        .info { background: #1e88e5; color: #ffffff; }
+
+        #foot { padding: 4px 14px 0px 14px; font-size: 11px; line-height: 15px; color: #4f6478; }
+    </style>
+</head>
+<body>
+
+<div id="head">
+    <span class="amber" id="num">Bus --</span>
+    <span class="dim"> | </span><span id="ident">--</span>
+    <span class="dim"> | </span><span class="cy" id="route">--</span>
+    <span class="dim"> &gt; </span><span id="stop">--</span>
+</div>
+<div id="accent"></div>
+
+<div class="sec">
+    <div class="tile">
+        <div class="title">SPEED</div>
+        <div class="big"><span id="kmh">0</span><span class="unit"> km/h</span></div>
+        <div class="track"><div class="fill" id="spdbar" style="background:#ffb020"></div></div>
+    </div>
+    <div class="tile">
+        <div class="title">ENGINE</div>
+        <div class="line"><span class="val" id="rpm">--</span><span class="dim"> rpm</span> &nbsp; gear <span class="val" id="gear">--</span> &nbsp; fuel <span class="val" id="tank">--</span></div>
+        <div class="track"><div class="fill" id="rpmbar"></div></div>
+        <div class="small">thr <span id="thr">--</span> &nbsp; brk <span id="brk">--</span> &nbsp; clu <span id="clu">--</span></div>
+    </div>
+    <div class="tile">
+        <div class="title">PEDALS</div>
+        <div class="plabel">THROTTLE</div><div class="ptrack"><div class="pfill" id="thrbar" style="background:#66bb6a"></div></div>
+        <div class="plabel">BRAKE</div><div class="ptrack"><div class="pfill" id="brkbar" style="background:#ef5350"></div></div>
+        <div class="plabel">CLUTCH</div><div class="ptrack"><div class="pfill" id="clubar" style="background:#ffa726"></div></div>
+    </div>
+</div>
+
+<div class="sec">
+    <div class="title">STATUS</div>
+    <div id="status"></div>
+    <div class="title">LIGHTS</div>
+    <div id="lights"></div>
+</div>
+
+<div class="sec">
+    <div class="title">DOORS <span id="doorsum"></span></div>
+    <div id="doors"></div>
+    <div id="pax"></div>
+</div>
+
+<div class="sec">
+    <div class="title">DATA</div>
+    <div id="data"></div>
+</div>
+
+<div class="sec">
+    <div class="btn" id="b_stop">STOP REQUEST</div><div class="btn" id="b_open">OUTSIDE OPENER</div><div class="btn" id="b_brake">BRAKE (hold)</div>
+</div>
+
+<div id="foot">--</div>
+
+<script>
+    window.omsi = window.omsi || {};
+    var O = window.omsi;
+
+    // In a plain browser there is no host: stub the calls and run a demo.
+    // (Written for the neoOMSI engine: no `new`, `this`, `prototype`, or classes.)
+    var DEMO = !O.apiVersion;
+    if (DEMO) {
+        O.setVar = function (n, v) { console.log('setVar', n, v); };
+        O.trigger = function (n) { console.log('trigger', n); };
+        O.getVar = function (n) { return undefined; };
+        O.vars = { num: {}, str: {} };
+    }
+
+    // ---- helpers ----
+    function $(id) { return document.getElementById(id); }
+    function txt(id, s) { $(id).textContent = s; }
+    function fmt(v, dp) { return (v === null || v === undefined) ? '--' : Number(v).toFixed(dp); }
+    function pct(v) {
+        if (v === null || v === undefined) { return '0%'; }
+        return Math.round(Math.max(0, Math.min(1, v)) * 100) + '%';
+    }
+    function yn(b) { return b ? 'yes' : 'no'; }
+
+    // A row of lamps, built once. A plain object instead of a constructor.
+    function makeRow(parentId) {
+        return { parent: $(parentId), map: {} };
+    }
+    function addLamp(row, key, label) {
+        var e = document.createElement('div');
+        e.className = 'lamp';
+        e.textContent = label;
+        row.parent.appendChild(e);
+        row.map[key] = e;
+    }
+    function setLamp(row, key, cls) {
+        row.map[key].className = cls ? 'lamp ' + cls : 'lamp';
+    }
+
+    var status = makeRow('status');
+    addLamp(status, 'engine', 'ENGINE');
+    addLamp(status, 'elec', 'ELECTRICS');
+    addLamp(status, 'batt', 'BATTERY');
+    addLamp(status, 'fail', 'FAILURE');
+    addLamp(status, 'park', 'PARKING');
+    addLamp(status, 'stopb', 'STOP BRAKE');
+    addLamp(status, 'kneel', 'KNEELING');
+    addLamp(status, 'wiper', 'WIPERS');
+    addLamp(status, 'trail', 'TRAILER');
+
+    var lights = makeRow('lights');
+    addLamp(lights, 'head', 'HEAD 0');
+    addLamp(lights, 'brake', 'BRAKE');
+    addLamp(lights, 'rev', 'REVERSE');
+    addLamp(lights, 'fog', 'FOG');
+    addLamp(lights, 'left', '<< LEFT');
+    addLamp(lights, 'right', 'RIGHT >>');
+    addLamp(lights, 'haz', 'HAZARD');
+    addLamp(lights, 'int', 'INTERIOR');
+
+    // data cells, made once
+    var cells = {};
+    var cellNames = ['heading', 'pitch', 'bank', 'steer', 'x', 'y', 'z', 'odo', 'cabin', 'dirt', 'crashes', 'impact', 'street', 'onboard'];
+    for (var i = 0; i < cellNames.length; i++) {
+        var c = document.createElement('div');
+        c.className = 'cell';
+        $('data').appendChild(c);
+        cells[cellNames[i]] = c;
+    }
+    function cell(name, label, value) {
+        cells[name].innerHTML = '<span class="dim">' + label + ' </span><span class="val">' + value + '</span>';
+    }
+
+    // ---- doors and boarding: rebuilt only when their number changes ----
+    var doorEls = [];
+    var paxKey;
+    function buildDoors(n) {
+        $('doors').innerHTML = '';
+        doorEls = [];
+        for (var k = 0; k < n; k++) {
+            var d = document.createElement('div');
+            d.className = 'door';
+            $('doors').appendChild(d);
+            doorEls.push(d);
+        }
+    }
+    function showDoors(doors) {
+        if (doors.count !== doorEls.length) { buildDoors(doors.count); }
+        for (var k = 0; k < doors.list.length; k++) {
+            var d = doors.list[k];
+            doorEls[k].className = d.isOpen ? 'door warn' : 'door';
+            doorEls[k].innerHTML = '<div class="n">' + d.number + '</div>' + (d.isOpen ? 'OPEN ' + Math.round(d.open * 100) + '%' : 'shut');
+        }
+        txt('doorsum', doors.count === 0 ? '(none reported)' : ' ' + doors.count + ' door(s), any open: ' + yn(doors.anyOpen));
+    }
+    function showPax(p) {
+        var parts = '';
+        var kinds = [['IN', p.entries], ['OUT', p.exits]];
+        for (var a = 0; a < kinds.length; a++) {
+            var list = kinds[a][1];
+            for (var k = 0; k < list.length; k++) {
+                var e = list[k];
+                var cls = e.open ? 'lamp on' : (e.requested ? 'lamp hot' : 'lamp');
+                parts += '<div class="' + cls + '">' + kinds[a][0] + ' ' + e.number + (e.requested ? ' REQ' : '') + '</div>';
+            }
+        }
+        // rebuild only when the text changed
+        if (parts !== paxKey) {
+            paxKey = parts;
+            $('pax').innerHTML = parts === '' ? '<span class="dim">no boarding doors reported</span>' : parts;
+        }
+    }
+
+    // ---- counters for the footer ----
+    var updates = 0;
+    var seconds = 0;
+    var lastAction = '-';
+
+    function show(v) {
+        // info
+        txt('num', 'Bus ' + (v.info.number === '' ? '--' : v.info.number));
+        txt('ident', v.info.ident === '' ? '--' : v.info.ident);
+        txt('route', v.info.route === '' ? '--' : v.info.route);
+        txt('stop', v.info.nextStop === '' ? '--' : v.info.nextStop);
+
+        // speed and engine
+        var kmh = Math.abs(v.motion.speedKmh);
+        txt('kmh', Math.round(kmh));
+        $('spdbar').style.width = pct(kmh / 100);
+        txt('rpm', fmt(v.engine.rpm, 0));
+        txt('gear', fmt(v.engine.gear, 0));
+        txt('tank', fmt(v.engine.tankContent, 0));
+        txt('thr', fmt(v.engine.throttle, 2));
+        txt('brk', fmt(v.engine.brake, 2));
+        txt('clu', fmt(v.engine.clutch, 2));
+        $('rpmbar').style.width = pct(v.engine.rpm === null ? 0 : v.engine.rpm / 2500);
+        $('thrbar').style.width = pct(v.engine.throttle);
+        $('brkbar').style.width = pct(v.engine.brake);
+        $('clubar').style.width = pct(v.engine.clutch);
+
+        // status lamps (battery: null = the bus has no such switch, stays dark)
+        setLamp(status, 'engine', v.engine.running ? 'on' : '');
+        setLamp(status, 'elec', v.electrics.on ? 'on' : '');
+        setLamp(status, 'batt', v.battery.on === null ? '' : (v.battery.on ? 'on' : 'warn'));
+        setLamp(status, 'fail', v.electrics.failure ? 'warn' : '');
+        setLamp(status, 'park', v.brakes.parking ? 'warn' : '');
+        setLamp(status, 'stopb', v.brakes.stop ? 'hot' : '');
+        setLamp(status, 'kneel', v.brakes.kneeling ? 'info' : '');
+        setLamp(status, 'wiper', v.wipers.running ? 'info' : '');
+        setLamp(status, 'trail', v.train.trailers > 0 ? 'info' : '');
+        status.map['trail'].textContent = v.train.trailers > 0 ? 'TRAILER ' + v.train.trailers : 'TRAILER';
+
+        // lights
+        var hl = v.lights.headlights;
+        lights.map['head'].textContent = 'HEAD ' + hl;
+        setLamp(lights, 'head', hl >= 3 ? 'info' : (hl > 0 ? 'on' : ''));
+        setLamp(lights, 'brake', v.lights.brake ? 'warn' : '');
+        setLamp(lights, 'rev', v.lights.reverse ? 'on' : '');
+        setLamp(lights, 'fog', v.lights.fog ? 'hot' : '');
+        setLamp(lights, 'left', v.lights.indicatorLeft ? 'hot' : '');
+        setLamp(lights, 'right', v.lights.indicatorRight ? 'hot' : '');
+        setLamp(lights, 'haz', v.lights.hazard ? 'warn' : '');
+        setLamp(lights, 'int', v.lights.interior > 0.05 ? 'on' : '');
+
+        // doors and boarding
+        showDoors(v.doors);
+        showPax(v.passengers);
+
+        // data
+        cell('heading', 'hdg', fmt(v.motion.heading, 1));
+        cell('pitch', 'pitch', fmt(v.motion.pitch, 2));
+        cell('bank', 'bank', fmt(v.motion.bank, 2));
+        cell('steer', 'steer', fmt(v.motion.steeringDeg, 1));
+        cell('x', 'x', fmt(v.motion.x, 1));
+        cell('y', 'y', fmt(v.motion.y, 1));
+        cell('z', 'z', fmt(v.motion.z, 1));
+        cell('odo', 'odo km', fmt(v.motion.odometerKm, 1));
+        cell('cabin', 'cabin C', fmt(v.cabin.temperature, 1));
+        cell('dirt', 'dirt', fmt(v.condition.dirt, 2));
+        cell('crashes', 'crashes', v.condition.crashes);
+        cell('impact', 'impact kJ', fmt(v.condition.lastImpactKJ, 1));
+        cell('street', 'street', fmt(v.condition.streetCondition, 2));
+        cell('onboard', 'aboard', fmt(v.passengers.onboard, 0));
+    }
+
+    function footer() {
+        var n = 0;
+        if (O.vars && O.vars.num) {
+            // a variable is stored under its lower-case name and as sent: count it once
+            var seen = {};
+            Object.keys(O.vars.num).forEach(function (k) { seen[k.toLowerCase()] = 1; });
+            n = Object.keys(seen).length;
+        }
+        var probe = O.getVar ? O.getVar('Engine_N') : undefined;
+        txt('foot', (DEMO ? 'DEMO | ' : '') + 'api ' + (O.apiVersion === undefined ? '-' : O.apiVersion) +
+            ' | updates ' + updates + ' | vars ' + n + ' | Engine_N ' + (probe === undefined ? 'n/a' : probe) +
+            ' | ' + seconds + ' s | last: ' + lastAction);
+    }
+
+    // ---- host entry point ----
+    O.update = function (d) {
+        updates++;
+        show(d.vehicle);
+        footer();
+    };
+
+    // ---- browser demo data (only used when there is no host) ----
+    function demoVehicle(t) {
+        var s = (Math.sin(t / 4) + 1) * 30;
+        var open = (t % 8) < 3;
+        return {
+            info: { number: '42', ident: 'DEMO', route: 'Line 7', nextStop: 'Central Station' },
+            motion: { speedKmh: s, heading: (t * 7) % 360, pitch: 0.4, bank: -0.2, steeringDeg: Math.sin(t) * 12, x: 120.5 + t, y: 33.2, z: 0.1, odometerKm: 1234.5 },
+            engine: { running: true, rpm: 800 + s * 25, gear: 3, tankContent: 180, throttle: 0.4, brake: 0, clutch: 0 },
+            electrics: { on: true, failure: false },
+            battery: { on: true },
+            brakes: { parking: false, stop: open, kneeling: false },
+            wipers: { running: (t % 10) < 5 },
+            train: { trailers: 0 },
+            lights: { headlights: 2, brake: false, reverse: false, fog: false, indicatorLeft: (t % 2) === 0, indicatorRight: false, hazard: false, interior: 0.6 },
+            doors: { count: 2, anyOpen: open, list: [{ number: 1, open: open ? 1 : 0, isOpen: open }, { number: 2, open: 0, isOpen: false }] },
+            passengers: { onboard: 23, entries: [{ number: 1, open: open, requested: false }], exits: [{ number: 2, open: false, requested: (t % 8) > 4 }] },
+            cabin: { temperature: 21.5 },
+            condition: { dirt: 0.12, crashes: 0, lastImpactKJ: 0, streetCondition: 1 }
+        };
+    }
+
+    // A timer keeps the footer alive and redraws from the latest snapshot once a second.
+    setInterval(function () {
+        seconds++;
+        if (DEMO) { show(demoVehicle(seconds)); }
+        else if (O.vehicle && O.vehicle.info) { show(O.vehicle); }
+        footer();
+    }, 1000);
+    if (DEMO) { show(demoVehicle(0)); }
+    footer();
+
+    // ---- controls: these write back to the vehicle ----
+    function act(name) { lastAction = name; footer(); }
+    $('b_stop').onclick = function () {
+        O.trigger('door_haltewunsch');
+        O.trigger('door_haltewunsch_off');
+        act('trigger door_haltewunsch');
+    };
+    $('b_open').onclick = function () {
+        O.trigger('door_aussenoeffner');
+        O.trigger('door_aussenoeffner_off');
+        act('trigger door_aussenoeffner');
+    };
+
+    var brakeHeld = false;
+    function brakeOn() {
+        if (brakeHeld) { return; }
+        brakeHeld = true;
+        O.setVar('Brake', 1);
+        $('b_brake').className = 'btn warn';
+        act('setVar Brake 1');
+    }
+    function brakeOff() {
+        if (!brakeHeld) { return; }
+        brakeHeld = false;
+        O.setVar('Brake', 0);
+        $('b_brake').className = 'btn';
+        act('setVar Brake 0');
+    }
+    $('b_brake').addEventListener('mousedown', brakeOn);
+    $('b_brake').addEventListener('mouseup', brakeOff);
+    // released next to the button: still let go of the brake
+    document.body.addEventListener('mouseup', brakeOff);
+</script>
+</body>
+</html>

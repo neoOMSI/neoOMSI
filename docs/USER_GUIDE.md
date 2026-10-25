@@ -42,6 +42,7 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 - **Cockpit switches:** Left-click to toggle, click and drag to turn rotary dials.
 - **Look around:** Hold Right-Mouse-Button and move mouse (or arrow keys / `I`/`J`/`K`/`L`).
 - **In-game menu:** Press `Esc` to access settings, switch buses, or exit.
+- **Find a setting:** Type in the search field of **Options** (or `Ctrl+F`). It matches names, descriptions, key bindings and related words ("lag", "mic", "fullscreen"), forgives typos, and shows where each result lives. `Esc` clears it.
 
 ## Trip evaluation
 
@@ -90,6 +91,37 @@ Puddle reflections remain visible from inside the bus through its windows and ra
 films. Glass tint and raindrops affect the view, including the reflections outside.
 Each graphics mode keeps its own lighting and colour treatment.
 
+## Upscaling (DLSS and FSR)
+
+Settings → Graphics → **Upscaling** chooses how the picture is brought to the window size:
+
+- **Off (native resolution)**: full resolution, no upscaling.
+- **Render scale (previous)**: the previous behaviour, controlled by *Render scale* (default).
+- **AMD FSR 3.1**: on DirectX 12 and Vulkan, on most graphics cards.
+- **NVIDIA DLSS**: on DirectX 12 and Vulkan, on NVIDIA GeForce RTX cards.
+
+For FSR and DLSS, **Upscaling quality** picks Native AA / DLAA (full resolution, best
+edges), Quality, Balanced or Performance. The change takes effect at once, no restart.
+While driving, the line **Upscaling in use** shows what actually runs; hovering it shows the
+render size, the graphics interface and why a choice is unavailable. The settings are stored
+as `upscaler` and `upscale_quality` under `[graphics]`.
+
+When a choice is unavailable the game keeps *Render scale (previous)* and says why, for
+example:
+
+- *its runtime files are not installed next to the game*: the optional FSR or DLSS files
+  are missing.
+- *needs an NVIDIA GeForce RTX graphics card*: use FSR instead.
+- *it was prepared for … at start*: DLSS was set up for the other graphics API. Choose the
+  named one under *Graphics API* and restart.
+- *it could not start (…)*: the driver or runtime refused; update the graphics driver. After
+  such an error the choice stays off until the next start.
+
+Tips: Quality or Native AA give the cleanest picture; Performance helps most when the
+graphics card is the limit and does little when the processor is. Upscaling does not apply to
+triple-screen and VR views, which keep the spatial path. Windows smaller than 32 pixels (for
+example while being restored) draw without DLSS for those frames.
+
 ## Command-line options
 
 You can launch directly into a specific scenario using command-line arguments:
@@ -115,6 +147,17 @@ Place mods into the `mods` folder of neoOMSI's content folder (as a folder or a 
 **Load order.** Mods are loaded according to their priority: an entry higher in the load order overrides files it shares with lower entries and with the original OMSI 2 files. For example, place an add-on or repaint above the bus it modifies. The order is stored in `mods/.load-order.json`. When unconfigured, default ordering applies (archives from the old `Archives` folder first, followed by mods alphabetically).
 
 A mod's plugins (code running alongside the game) can be configured per mod. Uninstalling moves a mod to `mods/uninstalled`; nothing is deleted. Changes take effect on the next game start.
+
+OMSI 2 plugins (an `.opl` file and its DLL in a `plugins` folder) load as in OMSI. They are 32-bit
+Windows programs, so they run in `legacy-plugin-host32.exe`, which comes with neoOMSI; on Linux and
+macOS that needs Wine (`wine` on the path, or the program `OMSI_WINE` names). A plugin that talks to
+hardware over a serial port sees the ports Wine maps in `~/.wine/dosdevices` (for example
+`com1 -> /dev/ttyUSB0`).
+
+A plugin can be turned off (or on) in `settings.toml`, by the name of its DLL without `.dll`:
+`[plugins.Gazz]` with `enabled = false`. Grand Paris-Moulon's `GPM.dll` is off unless you turn it on
+(`[plugins.GPM]`, `enabled = true`): it waits for GPM's online service, which is down, and holds
+the INEO box of the map's buses at its login meanwhile.
 
 When content required by a map or vehicle cannot be found, neoOMSI logs missing files and notifies you upon loading.
 

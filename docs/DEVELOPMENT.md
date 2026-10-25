@@ -53,6 +53,8 @@ For fast iteration while developing, use the development scripts detailed in [Bu
 - **Windows:** `scripts\dev-windows.cmd` (or `scripts\dev-windows-release.cmd` for optimized testing)
 - **macOS:** `sh scripts/dev-macos.sh`
 
+**Spatial audio (Steam Audio):** the options *3D audio for headphones*, *Sound occlusion* and *Environmental reverb* need Steam Audio's runtime library. The game loads it at run time from `NEOOMSI_STEAM_AUDIO` (the library or its folder), from beside the executable, or from the system's library path, and keeps its own panning without it. Fetch it with `bash scripts/fetch-steam-audio.sh windows-x64 target/debug` (or `linux-x64`, `osx`; on Windows also `scripts\fetch-steam-audio.ps1 -Dest target\debug`). The audio tests that need the library skip themselves when it is missing; run them with `NEOOMSI_STEAM_AUDIO` set to test the Steam Audio path.
+
 Before opening a pull request, verify that workspace checks pass:
 
 ```sh
