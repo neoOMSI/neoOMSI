@@ -228,7 +228,7 @@ jobs:
         shell: bash
         run: gh release edit "$TAG" --latest --prerelease=false
       - name: Notify Discord
-        if: ${{ inputs.notify_discord != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.notify_discord != false }}
         shell: bash
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
