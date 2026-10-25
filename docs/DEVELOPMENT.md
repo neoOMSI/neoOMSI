@@ -44,7 +44,7 @@ main
 
 ### Release branches
 
-`release/x.y` branches are created to stabilize Release Candidates and are retained for the currently supported stable line so patch releases can be cut without disturbing `main`. Once the next stable minor release is published, the previous release branch may be deleted. See [Releasing & versioning](RELEASING.md).
+`release/x.y` branches are created to stabilize releases and allow supported patches without disturbing `main`. The 0.2 line is in early live support: it gets one final planned patch cycle, 0.2.3, after which only exceptional release blockers may be backported. New routine fixes, parity work, and features go to `main` for 0.3. See [Releasing & versioning](RELEASING.md).
 
 ## Local development and testing
 

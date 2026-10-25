@@ -11,7 +11,7 @@ neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 develop
 | **Nightly**           | `0.x.y-nightly.g<engine-sha>`   | `0.2.0-nightly.gc3652dc0`  |
 | **Release Candidate** | `v0.x.y-rc.<n>`                 | `v0.2.0-rc.1`              |
 | **Stable**            | `v0.x.y`                        | `v0.2.0`                   |
-| **Patch**             | `v0.x.y+1`                      | `v0.2.1`                   |
+| **Patch**             | `v0.x.y+1`                      | `v0.2.2`                   |
 
 `1.0.0` is reserved for achieving comprehensive behavioral parity across the OMSI 2.2.032 baseline, not simply for elapsed development time.
 
@@ -38,6 +38,7 @@ v0.2.0-rc.1
 v0.2.0-rc.2
 v0.2.0
 v0.2.1
+v0.2.2
 ```
 
 Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<engine>`) on GitHub Releases.
@@ -45,16 +46,10 @@ Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<engine>`)
 ## Release workflow
 
 ```text
-main branch (trunk)
-    │
-    ├── Nightly builds (03:37 Europe/Berlin & manual dispatch)
-    │
-    └── Create release branch: release/0.2
-            │
-            ├── Tag: v0.2.0-rc.1 (testing)
-            ├── Tag: v0.2.0-rc.2 (blocker fixes)
-            │
-            └── Tag: v0.2.0      (final release commit)
+main (nightlies)
+  └── release/x.y → prepare → RC(s) → stable → sync to main
+                       └── patch fixes → prepare → patch tag → sync to main
+                            (repeat as needed; no RCs for patches)
 ```
 
 ### 1. Nightly builds
@@ -63,36 +58,39 @@ Automated CI builds run nightly at 03:37 in `Europe/Berlin` (and on manual workf
 
 The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
 
-### 2. Preparing a Stable release
+Engine source tags live in GitLab; public release tags live in the Releases repo on GitHub and point to that repo's metadata commit. Before pushing any public RC or stable tag, sync the compiled `CHANGELOG.md` to the Releases repo. The public tag must contain that version's changelog section, and the matching GitLab source tag must already exist for GitHub Actions to build it.
 
-When `main` reaches a stabilization milestone:
+For every release, a failed, skipped, or incomplete required GitHub Actions job blocks publication, including quota or infrastructure failures. Resolve the cause and rerun validation before announcing the release.
 
-1. Create a dedicated branch: `release/x.y`.
-2. Enter **feature freeze**: only critical bug fixes, documentation corrections, and packaging fixes may be committed to this branch.
-3. Keep `main` open for ongoing feature and parity development. Ensure all fixes on the release branch are cherry-picked back into `main`.
+### 2. Minor release: freeze → prepare → RC → stable → sync
 
-### 3. Release Candidates (RCs)
+1. **Freeze:** Branch `release/x.y` from a tested `main` commit (e.g. `release/0.2`). Allow only release blockers, documentation corrections, and packaging fixes on the release branch; development continues on `main`.
+2. **Prepare:** Update `VERSION`, run `bash scripts/compile-changelog.sh <version> <YYYY-MM-DD>`, review the resulting changelog and fragment removals, then commit as `chore(release): prepare <version>`.
+3. **RC:** Check GitHub Actions capacity, tag `v<version>-rc.1` on the prepared source commit in GitLab, then sync the changelog and push the matching public RC tag. Verify the GitHub Actions release workflow, required platform artifacts, build manifest, and behavior across supported systems and representative content. Fix blockers on the release branch and issue `-rc.2`, `-rc.3`, etc. as needed.
+4. **Stable:** When an RC has no known release blockers, tag **the exact accepted source commit** as `v<version>` in GitLab. Do not add an untested finalization commit.
+5. **Sync:** Merge the release branch directly into source `main` without duplicating changelog entries. Sync the compiled `CHANGELOG.md` to the public Releases repo's `main`, then push its public `v<version>` tag on that changelog commit.
+6. **Verify and announce:** Wait for the GitHub Actions workflow to finish with all required platform artifacts and the build manifest. Announce the stable release only after the workflow succeeds.
 
-1. Tag the first candidate from the release branch (e.g. `v0.4.0-rc.1`).
-2. Conduct testing across supported operating systems, maps, buses, and hardware configurations.
-3. If release blockers are discovered, apply the fix to the release branch and tag `v0.4.0-rc.2`.
+### 3. Patch release: fix → prepare → patch → sync
 
-### 4. Tagging the Stable release
+Patch releases **do not use Release Candidates**. On the current supported `release/x.y` branch:
 
-Once an RC exhibits no known release blockers:
+1. Apply and review the necessary fixes; retain the release branch's feature freeze.
+2. Update `VERSION`, compile and review the patch changelog with the same script, and commit as `chore(release): prepare <version>`.
+3. Check GitHub Actions capacity and validate the exact source commit. Tag `v<version>` directly (e.g. `v0.2.3`) in GitLab, without an `-rc` tag.
+4. Merge the release branch directly into source `main` without duplicating changelog entries. Sync the compiled `CHANGELOG.md` to the public Releases repo, then push the public `v<version>` tag on that changelog commit.
+5. Verify the GitHub Actions release workflow, required platform artifacts, build manifest, and release notes before announcing the patch.
+6. Repeat this patch cycle only when necessary.
 
-- Tag the **exact commit** of the final accepted RC as the Stable release (e.g. `v0.4.0`).
-- Avoid pushing last-minute, unvalidated changes between the final RC and the release tag.
+### Early live support for 0.2
 
-### 5. Patch releases
+neoOMSI 0.2 is in an **early live support** phase. After 0.2.2, we plan one final patch cycle, 0.2.3, for the remaining reviewed release work. After 0.2.3, routine 0.2 maintenance ends: new parity work, ordinary bug fixes, performance changes, and features go to `main` for 0.3.
 
-If critical issues are identified post-release:
+After that final cycle, only an exceptional **release blocker** may be backported to 0.2: a reproducible crash or data loss, or a defect that prevents players from starting, loading, or continuing a normal session, with no practical workaround. A blocker affecting a supported multiplayer setup also qualifies if it makes that mode unusable. Such a backport still requires maintainer review and the release validation above.
 
-- Fixes are applied directly to the corresponding `release/x.y` branch.
-- Tag and publish a patch release (e.g. `v0.4.1`).
-- Mirror the fix into `main`.
+For every release, never move or reuse a published tag. Use ordinary Conventional Commits for fixes (e.g. `fix(graphics): recover from swapchain failure`); the sole standardized release-preparation message is `chore(release): prepare <version>`.
 
-Only the latest stable minor line is actively maintained. Its `release/x.y` branch remains available for patches until the next stable minor release is published. Older release branches may then be deleted; their tags and published releases remain permanent, and a maintenance branch can be recreated from a tag if an exceptional backport is ever required.
+Only the latest stable minor line is normally maintained. Its `release/x.y` branch remains available for patches until the next stable minor release is published; 0.2 follows the early-live-support cutoff above. Older release branches may then be deleted; tags and published releases remain permanent, and a maintenance branch can be recreated from a tag for an exceptional backport.
 
 ## Changelog management
 
