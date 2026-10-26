@@ -82,15 +82,15 @@ Patch releases **do not use Release Candidates**. On the current supported `rele
 5. Verify the GitHub Actions release workflow, required platform artifacts, build manifest, and release notes before announcing the patch.
 6. Repeat this patch cycle only when necessary.
 
-### Early live support for 0.2
+### Early live support and support cutoff
 
-neoOMSI 0.2 is in an **early live support** phase. After 0.2.2, we plan one final patch cycle, 0.2.3, for the remaining reviewed release work. After 0.2.3, routine 0.2 maintenance ends: new parity work, ordinary bug fixes, performance changes, and features go to `main` for 0.3.
+Each stable minor line has a bounded **early live support** period after its initial release. Maintainers announce the planned final patch cycle or support cutoff for that line. During this period, reviewed maintenance fixes can be included in the planned patch releases; new features and routine parity or performance work continue on `main` for the next minor line.
 
-After that final cycle, only an exceptional **release blocker** may be backported to 0.2: a reproducible crash or data loss, or a defect that prevents players from starting, loading, or continuing a normal session, with no practical workaround. A blocker affecting a supported multiplayer setup also qualifies if it makes that mode unusable. Such a backport still requires maintainer review and the release validation above.
+After the announced cutoff, routine maintenance on that release line ends. Only an exceptional **release blocker** may be backported: a reproducible crash or data loss, a defect that prevents players from starting, loading, or continuing a normal session, or an issue that makes a supported multiplayer setup unusable, with no practical workaround. Every backport still requires maintainer review and the release validation above.
 
 For every release, never move or reuse a published tag. Use ordinary Conventional Commits for fixes (e.g. `fix(graphics): recover from swapchain failure`); the sole standardized release-preparation message is `chore(release): prepare <version>`.
 
-Only the latest stable minor line is normally maintained. Its `release/x.y.x` branch remains available for patches until the next stable minor release is published; 0.2 follows the early-live-support cutoff above. Older release branches may then be deleted; tags and published releases remain permanent, and a maintenance branch can be recreated from a tag for an exceptional backport.
+Only the latest stable minor line is normally maintained. Its `release/x.y.x` branch remains available through its announced early-live-support period. After the cutoff, the branch may be deleted; tags and published releases remain permanent, and a maintenance branch can be recreated from a tag for an exceptional release-blocker backport.
 
 ## Changelog management
 

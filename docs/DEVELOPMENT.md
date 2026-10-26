@@ -44,7 +44,7 @@ main
 
 ### Release branches
 
-`release/x.y.x` branches are created to stabilize a minor release line and allow its patch releases without disturbing `main`. The 0.2 line is in early live support: it gets one final planned patch cycle, 0.2.3, after which only exceptional release blockers may be backported. New routine fixes, parity work, and features go to `main` for 0.3. See [Releasing & versioning](RELEASING.md).
+`release/x.y.x` branches stabilize a minor release line and allow its planned patch releases without disturbing `main`. Each line has an announced early-live-support period and cutoff. After the cutoff, only exceptional release blockers may be backported; routine fixes, parity work, performance changes, and features go to `main` for the next minor line. See [Releasing & versioning](RELEASING.md).
 
 ## Local development and testing
 
