@@ -6,6 +6,18 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
+## 0.2.3 - 2026-10-27
+
+### Fixes
+
+- Fixed multiplayer map downloads failing when another program uses the host's TCP ports. (!636)
+- AI buses no longer jam stations or run red exits; cars pass, pull out and park without grazing. (!645)
+
+### Changes
+
+- Updated the five loading screen backgrounds.
+- Server code and build inputs changed since 0.2.2.
+
 ## 0.2.2 - 2026-10-25
 
 ### Fixes
