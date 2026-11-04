@@ -27,6 +27,9 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - `GetArrBusTimeDiff` uses the timetable time, so Gerolstein boards stay on "sofort". (!737)
 - AI timetable buses follow OMSI's off-screen stop waits and [AIPriorityScheduled] line limit. (!738)
 - The main-menu route list previews each upcoming trip using its timetable terminus without repeating the route number, while trip choices show their start and end stops with NIS labels for non-passenger trips. (!759)
+- Timetable vehicles wait at unserved first stops and steer into bays at the pace OMSI does. (!768)
+- Opening the doors at an earlier stop switches the player's duty back to it, as in OMSI 2, and the report records it as served. A terminus completes only when the bus stops there, and loops never reopen a served stop. (!769)
+- Wet roads grip as in OMSI (0.73), so bus wheels no longer spin up as easily in the rain. (!774)
 
 ### Features
 
@@ -66,6 +69,8 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Added classic vehicle lights, a classic sky and a built-in Vanilla+ graphics profile. (!751)
 - Photography mode adds full camera roll controls and temporary traffic hiding. (!756)
 - The information bar can now show the current tour, with its own display option. (!758)
+- Added `--export-glb-full-textures` to export textures at full size as PNG. (!763)
+- Added experimental road and suspension vibration for supported wheels and controllers, with an enable confirmation and a five-level intensity setting under Gameplay > Driving. (!772)
 
 ### Fixes
 
@@ -147,6 +152,16 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Fixed missing light glows and star effects on street lamps whose light points sit inside their collision housings, including the stock large double neon lamp. (!753)
 - Linux and macOS: textures stay within the memory budget the graphics driver reports. (!755)
 - Fixed sidewalk, kerb and island tops turning transparent on maps whose spline textures carry an all-opaque alpha channel (Ahlheim & Laurenzbach Updated), where a side face could draw over the top. (!757)
+- Vehicle displays that draw a full-colour font on top of a smaller colour bitmap keep the font's colours again, so the VHH 98's brake and reservoir pressure bars are dark as in OMSI 2 instead of white. (!760)
+- Passengers now duck under low path links with procedural passenger animation, while walking and sitting down. (!761)
+- Rear sections of articulated buses now collide, and flat collision walls no longer have holes. (!762)
+- `--export-glb` keeps `[matl_transmap]` alpha and each slot's own `[matl_alpha]`. (!763)
+- Fixed the game picture freezing while the window is unfocused but still visible. (!764)
+- Tapping an indicator toggle gives the MAN NLC comfort flashes again; holding it latches. (!765)
+- Rear-boarding passengers no longer skip the nearest door for one far down the bus. (!767)
+- Bus scripts now see a depot file changed in the game, so Hamburg buses empty at the terminus. (!768)
+- Buses no longer sway from side to side at high frame rates. (!771)
+- Kerbs no longer wrestle the steering wheel out of the hands of keyboard and mouse drivers: only a tyre actually at the kerb holds the steering, it can only nudge the wheels a little, and it eases back when contact is lost instead of snapping. (!773)
 
 ### Performance
 
@@ -594,4 +609,3 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Moved the project website and documentation frontend to the dedicated public neoOMSI/website repository. (!594)
 - Added on-demand PR builds via the `/build` comment command and consolidated build steps into a shared build target workflow. (!93)
 - Redesigned GitHub issue forms and the pull request template into concise, purpose-specific templates. (!94)
-
