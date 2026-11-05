@@ -2,10 +2,11 @@
 
 All notable changes to neoOMSI will be documented in this file.
 
-Releases follow [Semantic Versioning](https://semver.org/); binary downloads are available on the
+Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
+[docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
-## 0.3.0 - 2026-11-03
+## 0.3.0 - 2026-11-05
 
 ### Breaking changes
 
@@ -29,6 +30,8 @@ Releases follow [Semantic Versioning](https://semver.org/); binary downloads are
 - Timetable vehicles wait at unserved first stops and steer into bays at the pace OMSI does. (!768)
 - Opening the doors at an earlier stop switches the player's duty back to it, as in OMSI 2, and the report records it as served. A terminus completes only when the bus stops there, and loops never reopen a served stop. (!769)
 - Wet roads grip as in OMSI (0.73), so bus wheels no longer spin up as easily in the rain. (!774)
+- Envir_Brightness follows OMSI's scene light: weather and all envir.cfg lights count. (!778)
+- Traffic lights time stops, jumps and request distances as in OMSI; bus greens no longer hang. (!779)
 
 ### Features
 
@@ -70,6 +73,9 @@ Releases follow [Semantic Versioning](https://semver.org/); binary downloads are
 - The information bar can now show the current tour, with its own display option. (!758)
 - Added `--export-glb-full-textures` to export textures at full size as PNG. (!763)
 - Added experimental road and suspension vibration for supported wheels and controllers, with an enable confirmation and a five-level intensity setting under Gameplay > Driving. (!772)
+- Envmap pictures are back on vehicles and objects; the Envmap pictures option turns them off. (!778)
+- Lit lamps now glow with a halo in daytime fog and rain. (!792)
+- Lit lamps on vehicles and signals now stand out in daylight, also from afar. (!793)
 
 ### Fixes
 
@@ -161,6 +167,17 @@ Releases follow [Semantic Versioning](https://semver.org/); binary downloads are
 - Bus scripts now see a depot file changed in the game, so Hamburg buses empty at the terminus. (!768)
 - Buses no longer sway from side to side at high frame rates. (!771)
 - Kerbs no longer wrestle the steering wheel out of the hands of keyboard and mouse drivers: only a tyre actually at the kerb holds the steering, it can only nudge the wheels a little, and it eases back when contact is lost instead of snapping. (!773)
+- Fixed cab display texts, such as on the Pixel XC-6, vanishing with rain on the windows. (!777)
+- Envmap strength follows OMSI: masks and transmaps replace the factor, not diffuse alpha. (!778)
+- AI traffic drives on at switched-off (dark) traffic lights, as in OMSI, instead of waiting. (!779)
+- macOS: neoOMSI.app in Applications now keeps its content in ~/.neoomsi/content (!781)
+- Menu preview: no grey specks from clear sun visor covers over the roof. (!782)
+- Passengers no longer hold open a door that only lets people off; they board at another. (!783)
+- Fixed vehicle lamp glows disappearing when viewed through the occupied bus's glass. (!791)
+- Headlights no longer light up sunlit roads by day, and wet roads now mirror lamps. (!792)
+- Fixed the main menu showing a selected bus name when starting on foot, with a clear message in the empty preview. (!794)
+- Buses no longer drop into gaps along tram rails in roads and get flung off the map. (!796)
+- Reduced kerb feedback with independent Road Feedback and Kerb Interaction toggles and intensity controls, while preserving the steering stop and doubling road vibration strength. (!797)
 
 ### Performance
 
