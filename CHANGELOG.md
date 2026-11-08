@@ -32,6 +32,8 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Wet roads grip as in OMSI (0.73), so bus wheels no longer spin up as easily in the rain. (!774)
 - Envir_Brightness follows OMSI's scene light: weather and all envir.cfg lights count. (!778)
 - Traffic lights time stops, jumps and request distances as in OMSI; bus greens no longer hang. (!779)
+- Map objects stored past their tile's edge are hidden, as in OMSI. (!801)
+- AI buses close up to about a metre behind the bus or traffic ahead, as in OMSI. (!812)
 
 ### Features
 
@@ -178,6 +180,18 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Fixed the main menu showing a selected bus name when starting on foot, with a clear message in the empty preview. (!794)
 - Buses no longer drop into gaps along tram rails in roads and get flung off the map. (!796)
 - Reduced kerb feedback with independent Road Feedback and Kerb Interaction toggles and intensity controls, while preserving the steering stop and doubling road vibration strength. (!797)
+- Signs and buildings marked as surface objects now cast shadows with "Every solid mesh". (!804)
+- Red traffic lights glow like amber ones at night and keep their light point off-axis. (!805)
+- Streetlight and scenery lamp glows remain visible through bus windows while still being hidden by opaque surfaces. (!806)
+- Route helpers now show map-specific arrows and bus stop icons when route arrows are enabled. (!807)
+- AI articulated buses no longer tilt nose up with the front section's rear axle in the road. (!808)
+- Handing an articulated bus to the AI no longer leaves its rear section behind. (!809)
+- AI buses no longer open their doors short of a stop with nothing ahead of them. (!812)
+- Pedestrians waiting at crossings stay on the footway instead of spilling into the road. (!815)
+- Restart after settings changes works without a bus and keeps traffic and passengers. (!816)
+- Passengers ring the bell based on stop spacing and bus speed, after leaving the previous stop. (!817)
+- The navigator follows your bus for route guidance when you step out. (!819)
+- Fixed Windows Vulkan stalls on AMD and uncapped modes, plus a one-second DX12 acquire wait after dropping an unpresented surface texture. (!822)
 
 ### Performance
 
@@ -192,6 +206,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Reduced CPU load per frame: indirect light is only recalculated when it changes. (!752)
 - Tile streaming no longer rebuilds every world list per tile, fewer stutters while driving (!754)
 - Less RAM and VRAM: freed memory is returned, more textures (passengers, BC7) are compressed. (!755)
+- Lamp glows check for saloon lights once per model instead of every frame. (!795)
 
 ### Internal & tooling
 
