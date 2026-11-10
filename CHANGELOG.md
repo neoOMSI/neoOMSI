@@ -6,7 +6,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
-## 0.3.0 - 2026-11-05
+## 0.3.0 - 2026-11-10
 
 ### Breaking changes
 
@@ -27,6 +27,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - `GetArrBusTimeDiff` uses the timetable time, so Gerolstein boards stay on "sofort". (!737)
 - AI timetable buses follow OMSI's off-screen stop waits and [AIPriorityScheduled] line limit. (!738)
 - The main-menu route list previews each upcoming trip using its timetable terminus without repeating the route number, while trip choices show their start and end stops with NIS labels for non-passenger trips. (!759)
+- Unlocked outside (F2) and spotter (F4) camera zoom and vertical pitch limits for OMSI parity. (!766)
 - Timetable vehicles wait at unserved first stops and steer into bays at the pace OMSI does. (!768)
 - Opening the doors at an earlier stop switches the player's duty back to it, as in OMSI 2, and the report records it as served. A terminus completes only when the bus stops there, and loops never reopen a served stop. (!769)
 - Wet roads grip as in OMSI (0.73), so bus wheels no longer spin up as easily in the rain. (!774)
@@ -34,6 +35,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Traffic lights time stops, jumps and request distances as in OMSI; bus greens no longer hang. (!779)
 - Map objects stored past their tile's edge are hidden, as in OMSI. (!801)
 - AI buses close up to about a metre behind the bus or traffic ahead, as in OMSI. (!812)
+- Collect passenger fares from the cash desk by clicking the money or pressing Shift+T. (!818)
 
 ### Features
 
@@ -74,10 +76,30 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Photography mode adds full camera roll controls and temporary traffic hiding. (!756)
 - The information bar can now show the current tour, with its own display option. (!758)
 - Added `--export-glb-full-textures` to export textures at full size as PNG. (!763)
+- Players can opt in to share anonymous session summaries with frame and GPU timings, hardware and graphics configuration, and driving-context splits to help identify performance bottlenecks; reports expire after 30 days. (!770)
 - Added experimental road and suspension vibration for supported wheels and controllers, with an enable confirmation and a five-level intensity setting under Gameplay > Driving. (!772)
 - Envmap pictures are back on vehicles and objects; the Envmap pictures option turns them off. (!778)
+- NVIDIA DLSS (incl. DLAA) now also works on Linux with Vulkan on NVIDIA RTX cards. (!780)
+- Added a passenger option to use all installed humans or only those in the map's humans.txt. (!790)
 - Lit lamps now glow with a halo in daytime fog and rain. (!792)
 - Lit lamps on vehicles and signals now stand out in daylight, also from afar. (!793)
+- Smoke can be shown for all vehicles, only your own vehicle or turned off, as in OMSI. (!798)
+- By day, headlights now light up signs, vehicles and wet roads. (!811)
+- Game & Updates now always shows the currently running neoOMSI version. (!813)
+- Content authors can share texture folders and individual textures between installed vehicles and scenery without copying the assets. (!814)
+- Navigator hover cards show bus trip details and the next three services at stops. (!820)
+- Added optional 1024 px mirrors with up to 60 FPS refresh and anti-aliasing. (!821)
+- New OMSI parity options: passengers as in OMSI, or neoOMSI rules that fill interchanges. (!823)
+- Start menu can offer only the fleet numbers, plates and repaints of the map's AI list. (!826)
+- Added an in-game performance recording (Ctrl+F10, F10 marks a stutter) that saves one zip with frame, stage and function timings and the worst hitches to the desktop for bug reports, plus a tool that turns it into a report. (!827)
+- Lua plugins can talk to apps on this PC and follow trips, crashes and services. (!829)
+- Lua plugins can start and end duties, see the traffic light ahead and hear red light runs. (!830)
+- Maps, timetables, buses, repaints and HOF files refresh while the main menu is open. (!831)
+- Added a "Next departures" list to the start menu that suggests the next passenger trips of every line from the chosen start time, showing each trip's full destination sign. (!839)
+- Added Import from openOMSI to the controller settings and to Options > Game, and a one-time offer at the first start to take over openOMSI gamepads, wheels and key bindings when they differ from the OMSI 2 defaults. (!840)
+- Take a seat in an AI bus or teleport on foot from the navigator map. (!841)
+- The update dialog now highlights the version and groups changes by category. The repeated development notice, dedicated server status and download table are hidden in the in-app changelog. (!845)
+- Most pedestrians now walk past stops; set the share who wait in neoOMSI passenger options. (!847)
 
 ### Fixes
 
@@ -164,7 +186,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Rear sections of articulated buses now collide, and flat collision walls no longer have holes. (!762)
 - `--export-glb` keeps `[matl_transmap]` alpha and each slot's own `[matl_alpha]`. (!763)
 - Fixed the game picture freezing while the window is unfocused but still visible. (!764)
-- Tapping an indicator toggle gives the MAN NLC comfort flashes again; holding it latches. (!765)
+- Tapping an indicator toggle gives the MAN NLC comfort flashes again; holding it latches (!765)
 - Rear-boarding passengers no longer skip the nearest door for one far down the bus. (!767)
 - Bus scripts now see a depot file changed in the game, so Hamburg buses empty at the terminus. (!768)
 - Buses no longer sway from side to side at high frame rates. (!771)
@@ -172,6 +194,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Fixed cab display texts, such as on the Pixel XC-6, vanishing with rain on the windows. (!777)
 - Envmap strength follows OMSI: masks and transmaps replace the factor, not diffuse alpha. (!778)
 - AI traffic drives on at switched-off (dark) traffic lights, as in OMSI, instead of waiting. (!779)
+- FSR and DLSS look sharper: textures keep detail and a new Upscaling sharpness option. (!780)
 - macOS: neoOMSI.app in Applications now keeps its content in ~/.neoomsi/content (!781)
 - Menu preview: no grey specks from clear sun visor covers over the roof. (!782)
 - Passengers no longer hold open a door that only lets people off; they board at another. (!783)
@@ -180,6 +203,8 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Fixed the main menu showing a selected bus name when starting on foot, with a clear message in the empty preview. (!794)
 - Buses no longer drop into gaps along tram rails in roads and get flung off the map. (!796)
 - Reduced kerb feedback with independent Road Feedback and Kerb Interaction toggles and intensity controls, while preserving the steering stop and doubling road vibration strength. (!797)
+- AI traffic no longer stops in curves and turns when driving past vehicles on adjacent oncoming lanes. (!800)
+- The information bar now displays speed in mph when UK or Imperial units are selected, and km/h for Metric units. (!803)
 - Signs and buildings marked as surface objects now cast shadows with "Every solid mesh". (!804)
 - Red traffic lights glow like amber ones at night and keep their light point off-axis. (!805)
 - Streetlight and scenery lamp glows remain visible through bus windows while still being hidden by opaque surfaces. (!806)
@@ -192,6 +217,20 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Passengers ring the bell based on stop spacing and bus speed, after leaving the previous stop. (!817)
 - The navigator follows your bus for route guidance when you step out. (!819)
 - Fixed Windows Vulkan stalls on AMD and uncapped modes, plus a one-second DX12 acquire wait after dropping an unpresented surface texture. (!822)
+- Buses without a ticket printer now show the tickets on the driver's desk. (!824)
+- Passengers remember a bus door that opened for getting off only and board elsewhere (!825)
+- On GPU-bound PCs at low frame rates the picture no longer freezes for 1-4 seconds at a time; performance recordings measure the GPU in every frame and no longer count its steady pace as stutter. (!827)
+- The pause menu and its dialogs show in the VR headset again. (!828)
+- Passengers can get off at overlapping stands and at the next stop after a missed destination. (!832)
+- Passengers board the player's bus on timetable routes whose HOF destination differs from the terminus in case, spacing, underscores, dots or abbreviated place and street names; route codes and numbers stay exact and HOF lookup prefers exact names. (!833)
+- Fixed solid, angular shadows from foliage in vehicle headlights and other nearby lamps, including shadows from foliage hidden by winter textures. Smoothed the transition between near and distant spotlight shadows to reduce flicker as vehicles move. (!835)
+- Fixed alighting at adjacent AI bus stops and reduced crowding during boarding. (!837)
+- Automatic shifting for manual gearboxes moves up through the gears again on buses that keep the engaged gear in antrieb_getr_gang (Iveco Crossway, Irisbus Recreo and Evadys, Karosa C954E); they stayed in first. (!842)
+- Reduced oversized halos around traffic signals and vehicle lights in daytime fog and rain. (!843)
+- Clicking a desk ticket block now picks the block under the cursor, not its neighbour. (!844)
+- People coming off a crossing are no longer pushed into the road by those waiting there. (!848)
+- People on foot no longer stand on overhead wires built into tram track splines. (!849)
+- Fixed a black screen when starting a second drive on large maps (graphics memory ran out). (!851)
 
 ### Performance
 
@@ -207,6 +246,12 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Tile streaming no longer rebuilds every world list per tile, fewer stutters while driving (!754)
 - Less RAM and VRAM: freed memory is returned, more textures (passengers, BC7) are compressed. (!755)
 - Lamp glows check for saloon lights once per model instead of every frame. (!795)
+- Textures skip mips the screen can't show and assets load in the background: less VRAM and stutter. (!799)
+- Higher frame rates, above all at night and in rain: the main render passes are merged, GPU occlusion culling with render bundles is on by default, headlight shadows sample faster and the outside mirrors' far view is capped. (!827)
+
+### Website & documentation
+
+- Moved public player, server, and creator guides to docs.neoomsi.com. (!784)
 
 ### Internal & tooling
 
@@ -640,3 +685,4 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 - Moved the project website and documentation frontend to the dedicated public neoOMSI/website repository. (!594)
 - Added on-demand PR builds via the `/build` comment command and consolidated build steps into a shared build target workflow. (!93)
 - Redesigned GitHub issue forms and the pull request template into concise, purpose-specific templates. (!94)
+
