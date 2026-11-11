@@ -39,6 +39,7 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 
 ### Features
 
+- Added a first-launch dialog prompting players to activate anonymous performance reporting to help optimize frame rates and fix stutters. (!853)
 - Added optional dynamic window reflections for Vanilla+ and Enhanced graphics, with Balanced, High and Ultra quality. Nearby bus windows can reflect people, vehicles and lit cabin geometry, rendering only the visible window region. (!595)
 - Added NVIDIA DLSS (incl. DLAA) and AMD FSR 3.1 (incl. Native AA) under Settings → Graphics → Upscaling on DirectX 12 and Vulkan; without their runtime files the menu explains why. (!597)
 - Added an optional 1:1 steering wheel synchronization setting to turn the vehicle cockpit wheel linearly with physical steering wheel input instead of the bus model's animation multiplier. (!601)
