@@ -45,8 +45,6 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 
 - Fixed the demo plugin tests for the build layout of Cargo 1.100. (!909)
 
-## 0.3.0 - 2026-11-10
-
 ### Features
 
 - Added a first-launch dialog prompting players to activate anonymous performance reporting to help optimize frame rates and fix stutters. (!853)
