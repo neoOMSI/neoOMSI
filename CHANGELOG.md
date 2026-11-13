@@ -6,6 +6,45 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
+## 0.3.0 - 2026-11-13
+
+### Features
+
+- Side mouse buttons (Mouse 4/5 and more) can be bound to key actions. (!862)
+
+### Fixes
+
+- Clicking a two-way ignition key like the O405 one now inserts it instead of turning it. (!852)
+- Large maps no longer run out of graphics memory on cards with little room for textures. (!854)
+- Fixed walking on foot under overhead wires or bus shelters lifting the first-person view on top of them. (!856)
+- Fewer people wait at busy or late-served stops, and stop cubes at one place share a crowd. (!857)
+- Articulated buses: the rear section's driver camera now follows the front's last camera. (!861)
+- Free camera: Right Shift flies fast too; Shift+right-click turns the view instead of zooming. (!869)
+- AI cars no longer stand for minutes at roundabouts, at entries or on the ring. (!873)
+- Zoom bound to a controller button now works, and held pad zoom/look no longer keep going. (!880)
+- Your bus's outside-only sounds are no longer heard in the cab while doors and windows are shut. (!883)
+- Alt+Tab no longer presses Tab (the clutch) or opens the quick actions palette. (!884)
+- Buses, articulated ones above all, no longer slide sideways out of bends, unlike in OMSI. (!885)
+- Seasonal textures in snow fall back to the Winter and Fall folders as in OMSI. (!886)
+- A parked car that drives off frees its space for buses, traffic, riders, rain and light. (!890)
+- Jolts in an empty bus no longer count or lower the driving rating. (!891)
+- The "Passers-by who wait" share now also decides who of the people walking up to a stop waits. (!894)
+- Situations load and save each bus's odometer, so Bus Company Simulator mileage carries over. (!895)
+- Retextured add-on objects no longer show their pack's night picture after dark. (!896)
+- Some buses, like the SOR NBG 12, no longer loop a sound that OMSI keeps silent. (!898)
+- A full graphics card no longer leaves a black screen: vehicle textures give up detail instead. (!899)
+- Game sound plays at full level like OMSI, not 6 dB quieter; a smoother limiter catches peaks. (!902)
+- Scenery stays sharp on small graphics cards: AI vehicle textures give way first (!903)
+- Passengers no longer pop up at a stop while the first ones board your bus. (!907)
+- Fix the Alt menu cursor and preserve cockpit hover outside the panel. (!908)
+- Overlapping traffic light lamps now show only the active one, as on St-Servan bus signals. (!911)
+- Own passenger rules: free rides fill every stop, and stops in view fill one person a second. (!912)
+- Compatible ticket machines can now react when a passenger actually validates a ticket. (!913)
+
+### Internal & tooling
+
+- Fixed the demo plugin tests for the build layout of Cargo 1.100. (!909)
+
 ## 0.3.0 - 2026-11-10
 
 ### Features
