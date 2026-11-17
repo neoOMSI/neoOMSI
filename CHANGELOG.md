@@ -6,6 +6,32 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
+## 0.3.1 - 2026-11-17
+
+### Features
+
+- Preview the driver, passenger and external bus views from the main menu. (!931)
+- The log now notes once what an AI vehicle is waiting for when it stands still for a minute. (!938)
+
+### Fixes
+
+- Passers-by no longer cross the road through traffic to wait at a bus stop. (!923)
+- Restore cash pickup sounds, and make passengers more likely to buy tickets and need change. (!924)
+- Apply repaint options when the main-menu bus preview initializes. (!931)
+- Updated the Discord Rich Presence application ID and large image asset to `icon`. (!934)
+- The cab timetable paper now shows the next trip instead of going blank after a trip ends. (!939)
+- Fixed DirectX 12 crashes from the DLSS runtime on GTX cards and when DLSS could not start. (!940)
+- Curved coach windscreens no longer show the cabin reflection twice. (!941)
+- Kerbs no longer shove a standing bus or pin a rolling one; Kassel kerbs guide tyres steadily. (!942)
+- Coins and tickets on the cash desk are now lit by the cab lamps, as in OMSI. (!944)
+- The delay shown in game and given to scripts and plugins now runs on between stops. (!952)
+- Signals ahead of a tram are no longer hidden from its cab when its box is lower than the driver (!955)
+
+### Internal & tooling
+
+- Release forward-port no longer skips commits after a hand-ported one. (!927)
+- Rewrite release forward-port CI to group multi-commit MRs across all merge methods. (!948)
+
 ## 0.3.0 - 2026-11-13
 
 ### Features
