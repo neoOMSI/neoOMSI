@@ -6,6 +6,21 @@ Releases and versioning follow [Semantic Versioning](https://semver.org/) (see
 [docs/RELEASING.md](docs/RELEASING.md)); binary downloads are available on the
 [Releases](https://github.com/neoOMSI/neoOMSI/releases) page.
 
+## 0.3.2 - 2026-11-21
+
+### OMSI 2 parity
+
+- Envmap reflections now turn with the bus and the camera like in OMSI 2. (!966)
+
+### Fixes
+
+- Fixed passengers staying at the door instead of getting off at some Bowdenham stops. (!969)
+- Small white text printed on tinted bus windows no longer turns black. (!970)
+
+### Performance
+
+- Fewer stutters while driving, when AI buses show their displays and when parked cars leave. (!964)
+
 ## 0.3.1 - 2026-11-17
 
 ### Features
